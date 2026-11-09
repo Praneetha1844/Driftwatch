@@ -1,0 +1,35 @@
+# Default settings for the synthetic churn-style demo dataset (see `driftwatch simulate`).
+schema:
+  target: churned
+  columns:
+    tenure_months: { dtype: float, min: 0 }
+    monthly_spend: { dtype: float, min: 0 }
+    support_calls: { dtype: int, min: 0 }
+    plan: { dtype: category }
+    churned: { dtype: int, min: 0, max: 1 }
+
+train:
+  test_size: 0.2
+  seed: 42
+  reference_rows: 5000
+  model:
+    type: logistic_regression
+    params: {}
+
+drift:
+  bins: 10
+  psi_warn: 0.1     # common rule of thumb, tune per feature and sample size
+  psi_alert: 0.25
+  ks_alpha: 0.05
+  min_samples: 200
+
+promotion:
+  metric: f1
+  margin: 0.01       # candidate must beat production by at least this much
+  min_absolute: 0.0  # used when nothing is in production yet
+
+trigger:
+  alert_features: 1
+  warn_features: 3
+  schedule_days: 30
+  prediction_drift_alert: true
