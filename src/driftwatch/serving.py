@@ -152,16 +152,23 @@ def create_app(
     return app
 
 
-def app_from_env() -> FastAPI:
-    """Factory for ``uvicorn --factory``: serve the production version from the registry."""
-    name = os.environ.get("DRIFTWATCH_MODEL_NAME", "churn-demo")
-    registry = ModelRegistry(os.environ.get("DRIFTWATCH_REGISTRY_DIR", "registry"))
+def app_from_env(
+    name: str | None = None, registry_dir: str | None = None, config: str | None = None
+) -> FastAPI:
+    """Serve the production version from the registry.
+
+    Explicit arguments win, then the ``DRIFTWATCH_MODEL_NAME``, ``DRIFTWATCH_REGISTRY_DIR``
+    and ``DRIFTWATCH_CONFIG`` environment variables, then the defaults. Also usable as a
+    factory for ``uvicorn --factory``.
+    """
+    name = name or os.environ.get("DRIFTWATCH_MODEL_NAME", "churn-demo")
+    registry = ModelRegistry(registry_dir or os.environ.get("DRIFTWATCH_REGISTRY_DIR", "registry"))
     version = registry.production_version(name)
     if version is None:
         raise RuntimeError(
             f"model {name!r} has no production version; train, register and promote one first"
         )
     artifact = load_artifact(registry.version_dir(name, version))
-    settings = load_settings(os.environ.get("DRIFTWATCH_CONFIG", "config/default.yaml"))
+    settings = load_settings(config or os.environ.get("DRIFTWATCH_CONFIG", "config/default.yaml"))
     model = PipelineModel(artifact.pipeline, str(version), list(artifact.metadata["features"]))
     return create_app(model, artifact.reference, settings)

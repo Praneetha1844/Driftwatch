@@ -145,3 +145,40 @@ def test_cli_reports_errors_with_exit_code_one(tmp_path, capsys) -> None:
     code = main(["--config", str(CONFIG), "train", "--data", str(tmp_path / "nope.csv"),
                  "--artifact-dir", str(tmp_path / "a")])
     assert code == 1 and "error:" in capsys.readouterr().err
+
+
+def test_simulate_creates_a_missing_output_directory(tmp_path) -> None:
+    target = tmp_path / "data" / "nested" / "reference.csv"
+    assert main(["--config", str(CONFIG), "simulate", "--output", str(target), "--n", "50"]) == 0
+    assert target.exists()
+
+
+def test_cli_rollback_moves_production_and_refuses_a_noop(tmp_path, capsys) -> None:
+    from driftwatch.registry import ModelRegistry
+
+    registry = tmp_path / "registry"
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "metadata.json").write_text(json.dumps({"metrics": {"f1": 0.6}}), "utf-8")
+    store = ModelRegistry(registry)
+    store.register("demo", artifact)
+    store.register("demo", artifact)
+    args = ["--config", str(CONFIG), "rollback", "--name", "demo", "--version", "1",
+            "--reason", "version 2 misbehaves", "--registry", str(registry)]
+
+    assert main(args) == 0
+    assert store.production_version("demo") == 1
+    assert "rolled back" in capsys.readouterr().out
+    assert main(args) == 2  # already in production
+
+
+def test_drift_command_rejects_current_data_with_nulls(settings, tmp_path, capsys) -> None:
+    artifact = save_artifact(train(make_dataset(600, seed=0), settings), tmp_path / "a", settings)
+    current = make_dataset(300, seed=1)
+    current.loc[0, "monthly_spend"] = np.nan
+    current.to_csv(tmp_path / "cur.csv", index=False)
+
+    code = main(["--config", str(CONFIG), "drift", "--artifact-dir", str(artifact),
+                 "--current", str(tmp_path / "cur.csv")])
+
+    assert code == 1 and "null values in: ['monthly_spend']" in capsys.readouterr().err

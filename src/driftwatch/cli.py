@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from driftwatch.config import Settings, load_settings
-from driftwatch.data import DataValidationError, load_csv, require_valid
+from driftwatch.data import DataValidationError, load_csv
 from driftwatch.drift import DriftReport, detect_drift
 from driftwatch.policy import DecisionLog, decide_retraining
 from driftwatch.registry import ModelRegistry, RegistryError
@@ -27,7 +27,9 @@ DEFAULT_CONFIG = "config/default.yaml"
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="driftwatch", description=__doc__)
-    parser.add_argument("--config", default=DEFAULT_CONFIG, help="settings YAML")
+    parser.add_argument(
+        "--config", help=f"settings YAML (default: DRIFTWATCH_CONFIG or {DEFAULT_CONFIG})"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sim = sub.add_parser("simulate", help="write a seeded synthetic dataset")
@@ -62,9 +64,19 @@ def _parser() -> argparse.ArgumentParser:
             p.add_argument("--decision-log", type=Path, default=Path("decisions.jsonl"))
             p.add_argument("--fail-on-retrain", action="store_true")
 
+    rol = sub.add_parser("rollback", help="point production at an earlier version, with a reason")
+    rol.add_argument("--name", required=True)
+    rol.add_argument("--version", type=int, required=True)
+    rol.add_argument("--reason", required=True)
+    rol.add_argument("--registry", type=Path, default=Path("registry"))
+
     serve = sub.add_parser("serve", help="run the API for the production model")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--name", help="model name (default: DRIFTWATCH_MODEL_NAME or churn-demo)")
+    serve.add_argument(
+        "--registry", type=Path, help="registry root (default: DRIFTWATCH_REGISTRY_DIR or registry)"
+    )
     return parser
 
 
@@ -77,6 +89,9 @@ def _drift(
     missing = [c for c in features if c not in current.columns]
     if missing:
         raise DataValidationError(f"current data is missing columns: {missing}")
+    with_nulls = [c for c in features if current[c].isna().any()]
+    if with_nulls:
+        raise DataValidationError(f"current data has null values in: {with_nulls}")
     reference_scores = artifact.pipeline.predict_proba(artifact.reference[features])[:, 1]
     current_scores = artifact.pipeline.predict_proba(current[features])[:, 1]
     report = detect_drift(
@@ -93,6 +108,7 @@ def _drift(
 def _emit(payload: object, output: Path | None) -> None:
     text = json.dumps(payload, indent=2)
     if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
         print(f"wrote {output}")
     else:
@@ -101,18 +117,18 @@ def _emit(payload: object, output: Path | None) -> None:
 
 def run(args: argparse.Namespace) -> int:
     if args.command == "simulate":
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         make_dataset(args.n, args.seed, args.drift, args.label_shift).to_csv(
             args.output, index=False
         )
         print(f"wrote {args.n} rows to {args.output}")
         return 0
 
-    settings = load_settings(args.config)
+    config_path = args.config or os.environ.get("DRIFTWATCH_CONFIG") or DEFAULT_CONFIG
+    settings = load_settings(config_path)
 
     if args.command == "train":
-        frame = load_csv(args.data)
-        require_valid(frame, settings.data)
-        result = train(frame, settings)
+        result = train(load_csv(args.data), settings)  # train validates against the schema
         out = save_artifact(result, args.artifact_dir, settings)
         run_id = get_tracker(args.tracking_uri, args.runs_dir).log_run(
             "train",
@@ -133,6 +149,11 @@ def run(args: argparse.Namespace) -> int:
         print(("promoted: " if decision.allowed else "not promoted: ") + decision.reason)
         return 0 if decision.allowed else 2
 
+    if args.command == "rollback":
+        decision = ModelRegistry(args.registry).rollback(args.name, args.version, args.reason)
+        print(("rolled back: " if decision.allowed else "not rolled back: ") + decision.reason)
+        return 0 if decision.allowed else 2
+
     if args.command == "drift":
         report, _ = _drift(settings, args.artifact_dir, args.current)
         _emit(report.to_dict(), args.output)
@@ -150,7 +171,12 @@ def run(args: argparse.Namespace) -> int:
 
     from driftwatch.serving import app_from_env
 
-    uvicorn.run(app_from_env(), host=args.host, port=args.port)
+    app = app_from_env(
+        name=args.name,
+        registry_dir=str(args.registry) if args.registry else None,
+        config=config_path,
+    )
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
