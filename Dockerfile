@@ -1,4 +1,7 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
+
+LABEL org.opencontainers.image.source="https://github.com/Praneetha1844/Driftwatch" 
+      org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
