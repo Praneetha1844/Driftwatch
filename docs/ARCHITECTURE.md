@@ -31,7 +31,7 @@ sequenceDiagram
 | `data` | Collects all schema violations rather than failing on the first |
 | `train` | Fits the pipeline, evaluates on a held-out split, writes `model.joblib`, `reference.csv` and `metadata.json` |
 | `tracking` | `Tracker` protocol with `FileTracker` and `MlflowTracker`; MLflow is imported lazily |
-| `registry` | Copies artifacts into numbered versions, stores the `production` stage, appends every promotion attempt to `decisions.jsonl` |
+| `registry` | Copies artifacts into numbered versions, stores the `production` stage, appends every promotion or rollback attempt to `decisions.jsonl` |
 | `drift` | Pure functions for PSI and KS, and `detect_drift` which assembles a `DriftReport` |
 | `policy` | Pure `decide_retraining` plus an append-only `DecisionLog` |
 | `serving` | `create_app` takes any object satisfying `ServingModel`, so the API is testable without scikit-learn |
@@ -86,7 +86,10 @@ metric names.
 ## Failure behaviour
 
 - Invalid training data: `DataValidationError` listing every problem; nothing is written.
-- Unknown model version or bad name: `RegistryError`.
+- Unknown model version or bad name (names must start with a letter or digit): `RegistryError`.
+- Rollback without a reason, or to an unknown version: `RegistryError`. Rollback to the version
+  already in production is refused and logged.
+- Current data with missing feature columns or null values: `DataValidationError` before scoring.
 - Missing features at serving time: HTTP 422 with names, counted in the rejected metric.
 - Too little traffic for drift: `insufficient_data`, never a verdict from noise.
 - No production version at start-up: the service refuses to start with an explanatory error.

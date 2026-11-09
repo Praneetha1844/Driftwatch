@@ -22,7 +22,7 @@ The bundled demo data is **synthetic and invented**. See [Limitations](#limitati
 | Data | Schema validation (types, nulls, ranges) that reports every problem at once |
 | Training | scikit-learn pipeline (scaling, one-hot, logistic regression or random forest), stratified split, seeded |
 | Tracking | MLflow when a URI is set, otherwise a dependency-free file tracker behind the same interface |
-| Registry | Versioned artifacts and a `production` stage, with a log of every promotion attempt |
+| Registry | Versioned artifacts and a `production` stage, with a log of every promotion and rollback |
 | Promotion gate | Promote only if the candidate beats production by a configured margin on a chosen metric |
 | Serving | FastAPI `/predict`, `/health`, `/metrics`, `/drift`; the model version is in every response |
 | Drift | PSI and a two-sample KS test per feature, plus prediction and label drift |
@@ -50,7 +50,7 @@ flowchart LR
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the decision records in
-[docs/adr](docs/adr).
+[docs/adr](docs/adr). The full list of documents is in [docs/index.md](docs/index.md).
 
 ## Quick start
 
@@ -71,12 +71,17 @@ driftwatch drift  --artifact-dir artifacts/v1 --current data/current.csv
 driftwatch decide --artifact-dir artifacts/v1 --current data/current.csv --fail-on-retrain
 
 # Serve the production model
-DRIFTWATCH_MODEL_NAME=churn-demo driftwatch serve
+driftwatch serve --name churn-demo
 curl -s localhost:8000/health
+
+# Undo a bad release (bypasses the gate, needs a reason, is logged)
+driftwatch rollback --name churn-demo --version 1 --reason "version 2 regressed"
 ```
 
-Exit codes: `promote` returns 2 when the gate refuses; `decide --fail-on-retrain` returns 3 when
-retraining is recommended, so it can drive a scheduled job.
+Run the commands from the repository root, or pass `--config` (before the command) with the path to
+a settings file. Exit codes: `promote` and `rollback` return 2 when refused; `decide
+--fail-on-retrain` returns 3 when retraining is recommended, so it can drive a scheduled job. See
+[docs/CLI.md](docs/CLI.md).
 
 ### Calling the API
 
@@ -111,7 +116,8 @@ trigger:   { alert_features: 1, warn_features: 3, schedule_days: 30, prediction_
 ```
 
 The PSI cut-offs are conventional rules of thumb, not statistical guarantees. Tune them per
-feature and sample size.
+feature and sample size. Every setting and environment variable is documented in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md), and the serving API in [docs/API.md](docs/API.md).
 
 ## Project layout
 
@@ -145,6 +151,8 @@ MODEL_CARD.md    template for documenting a trained model
 - **Buffer is in memory.** `/drift` sees only the last `buffer_size` requests of one process; it
   resets on restart and is not shared across replicas.
 - **File registry.** Suitable for one machine or a mounted volume, not for concurrent writers.
+- **Restart after a promotion.** The service loads the production version once at start-up.
+- **No API authentication.** Keep the service on an internal network.
 - **Pickle-based artifacts.** `joblib` loads pickles; only load artifacts you produced.
 - **Binary classification only**, with a fixed 0.5 decision threshold in the API.
 - **Not evaluated.** No measured results exist. The test suite and CI configuration have not yet
@@ -165,6 +173,8 @@ MODEL_CARD.md    template for documenting a trained model
 make install
 make check     # ruff, mypy, pytest
 ```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Security notes are in [SECURITY.md](SECURITY.md).
 
 ## License
 

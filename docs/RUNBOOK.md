@@ -31,6 +31,11 @@ different mix of scoring requests, or a bug in preprocessing at serving time.
 Retraining is recommended. The reasons are in the JSON output and in `decisions.jsonl`. Exit
 code 3 is a signal for a scheduler, not an instruction to retrain blindly.
 
+## `drift` or `decide` says the current data has null values
+
+The command refuses to score rows with missing features. Fix or impute them upstream. Do not
+drop the affected rows silently, because that changes the distribution being measured.
+
 ## `promote` exits with code 2
 
 The gate refused. Read the reason in the output or `decisions.jsonl`: either the candidate does
@@ -39,5 +44,13 @@ force a promotion without recording the justification.
 
 ## Rolling back
 
-Point `stages.json` at an earlier version, or promote the earlier version again after
-removing the current stage file, and restart the service. The decision log keeps the history.
+The promotion gate refuses to move production to a lower-scoring version, so use the rollback
+command, which bypasses the gate and requires a reason:
+
+```bash
+driftwatch rollback --name churn-demo --version 1 --reason "version 2 regressed on live data"
+```
+
+Then restart the service, because it loads the production version once at start-up. The change
+is appended to `<registry>/<name>/decisions.jsonl` with `"action": "rollback"`, next to every
+promotion attempt. Rolling back to the version already in production is refused (exit code 2).
