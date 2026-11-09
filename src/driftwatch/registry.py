@@ -20,7 +20,8 @@ from typing import Any
 from driftwatch.config import PromotionConfig
 from driftwatch.train import METADATA_FILE
 
-_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+# Must start with a letter or digit so a name can never be "." or ".." and leave the registry root.
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 class RegistryError(ValueError):

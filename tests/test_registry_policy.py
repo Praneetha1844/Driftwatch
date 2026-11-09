@@ -44,8 +44,9 @@ def test_versions_increase_and_invalid_input_is_rejected(registry, tmp_path) -> 
     assert registry.register("demo", first) == 1
     assert registry.register("demo", first) == 2
     assert registry.versions("demo") == [1, 2]
-    with pytest.raises(RegistryError):
-        registry.register("../escape", first)
+    for bad_name in ("../escape", "..", ".", ".hidden", "a/b", ""):
+        with pytest.raises(RegistryError):
+            registry.register(bad_name, first)
     with pytest.raises(RegistryError):
         registry.register("demo", tmp_path)  # no metadata.json
     with pytest.raises(RegistryError):
