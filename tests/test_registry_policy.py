@@ -72,6 +72,36 @@ def test_promotion_flow_is_gated_and_logged(registry, tmp_path) -> None:
     assert registry.production_dir("demo") == registry.version_dir("demo", 3)
 
 
+def test_rollback_bypasses_the_gate_and_is_logged(registry, tmp_path) -> None:
+    for name, f1 in [("a", 0.70), ("b", 0.80)]:
+        registry.register("demo", make_artifact(tmp_path, name, f1))
+    assert registry.promote("demo", 1, POLICY).allowed
+    assert registry.promote("demo", 2, POLICY).allowed
+    assert not registry.promote("demo", 1, POLICY).allowed  # the gate refuses going backwards
+
+    decision = registry.rollback("demo", 1, "version 2 misbehaves in production")
+
+    assert decision.allowed and "misbehaves" in decision.reason
+    assert registry.production_version("demo") == 1
+    log = (tmp_path / "registry" / "demo" / "decisions.jsonl").read_text("utf-8").splitlines()
+    last = json.loads(log[-1])
+    assert last["action"] == "rollback" and last["version"] == 1 and last["allowed"] is True
+
+
+def test_rollback_needs_a_reason_and_an_existing_version(registry, tmp_path) -> None:
+    registry.register("demo", make_artifact(tmp_path, "a", 0.7))
+    with pytest.raises(RegistryError):
+        registry.rollback("demo", 1, "   ")
+    with pytest.raises(RegistryError):
+        registry.rollback("demo", 9, "no such version")
+
+
+def test_rollback_to_the_current_version_changes_nothing(registry, tmp_path) -> None:
+    registry.register("demo", make_artifact(tmp_path, "a", 0.7))
+    registry.promote("demo", 1, POLICY)
+    assert not registry.rollback("demo", 1, "already there").allowed
+
+
 # ---- retraining policy
 
 NOW = datetime(2026, 6, 1, tzinfo=UTC)

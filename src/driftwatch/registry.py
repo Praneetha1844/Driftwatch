@@ -4,7 +4,7 @@ Layout::
 
     <root>/<name>/versions/<n>/{model.joblib, reference.csv, metadata.json}
     <root>/<name>/stages.json         {"production": <n>}
-    <root>/<name>/decisions.jsonl     every promotion attempt, allowed or not
+    <root>/<name>/decisions.jsonl     every promotion or rollback attempt, allowed or not
 """
 
 from __future__ import annotations
@@ -120,15 +120,36 @@ class ModelRegistry:
             baseline = self.metrics(name, current) if current is not None else None
             decision = decide_promotion(policy, self.metrics(name, version), baseline)
         if decision.allowed:
-            (self._model_dir(name) / "stages.json").write_text(
-                json.dumps({"production": version}), encoding="utf-8"
-            )
-        self._log(name, version, decision)
+            self._set_production(name, version)
+        self._log(name, version, decision, action="promote")
         return decision
 
-    def _log(self, name: str, version: int, decision: PromotionDecision) -> None:
+    def rollback(self, name: str, version: int, reason: str) -> PromotionDecision:
+        """Point production at an existing version without applying the promotion gate.
+
+        A rollback usually goes to an older, lower-scoring version, which the gate would refuse.
+        A reason is required and the change is logged like any other decision.
+        """
+        if not reason.strip():
+            raise RegistryError("a rollback needs a reason")
+        self.version_dir(name, version)  # raises RegistryError for an unknown version
+        if self.production_version(name) == version:
+            decision = PromotionDecision(False, "version is already in production", None, None)
+        else:
+            decision = PromotionDecision(True, f"rollback: {reason.strip()}", None, None)
+            self._set_production(name, version)
+        self._log(name, version, decision, action="rollback")
+        return decision
+
+    def _set_production(self, name: str, version: int) -> None:
+        (self._model_dir(name) / "stages.json").write_text(
+            json.dumps({"production": version}), encoding="utf-8"
+        )
+
+    def _log(self, name: str, version: int, decision: PromotionDecision, action: str) -> None:
         entry: dict[str, Any] = {
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "action": action,
             "version": version,
             **asdict(decision),
         }
